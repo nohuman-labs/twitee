@@ -1,26 +1,41 @@
 # Twitee
 
-Twitee turns a real browser session into a small, self-hosted JSON API for X. Run one container, sign in to X through the built-in noVNC page, then request profiles, posts, or search results over HTTP.
+[![CI](https://github.com/nohuman-labs/twitee/actions/workflows/ci.yml/badge.svg)](https://github.com/nohuman-labs/twitee/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Twitee uses the website that a person sees in a browser. It does not use the official X API, and it does not ask for or store your X password. The saved browser session is encrypted on your Docker volume.
+![A browser session flowing through encrypted storage into a JSON API](docs/images/twitee-hero.png)
+
+Twitee turns a real browser session into a small, self-hosted JSON API for X. Deploy one container, sign in to X through the built-in browser, then request profiles, posts, and search results over HTTP.
+
+Twitee crawls the website a person sees in a browser. It does not use the official X API, ask for your X password, or depend on a database, worker, or job queue.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[Deploy Twitee] --> B[Open the noVNC login URL]
+    B --> C[Sign in on x.com]
+    C --> D[(Encrypted session in /data)]
+    E[Authenticated API request] --> F[Browser crawler]
+    D --> F
+    F --> G[Normalized JSON response]
+```
+
+1. Twitee starts a browser and a small HTTP API.
+2. `POST /v1/session/login` returns a short-lived noVNC URL. You sign in on the real X page shown there.
+3. Twitee saves the resulting browser session as AES-256-GCM encrypted data on the Docker volume.
+4. Each API request opens an isolated browser context with that session, reads X, returns normalized JSON, and closes the context.
+
+One instance uses one X account and runs one crawl at a time. Up to ten requests can wait in memory; each request has a 60-second deadline.
 
 > [!WARNING]
 > Browser automation can break when X changes its site and may be subject to X's terms and local law. Use an account and data you are authorized to access. Twitee is not affiliated with X Corp.
 
-## What it provides
-
-- One X account and one serialized browser slot per instance
-- Synchronous profile, post, and search endpoints
-- Manual login in a headed browser through capability-protected noVNC
-- AES-256-GCM encrypted session storage
-- A bounded queue with a 60-second request deadline
-- Docker and Docker Compose deployment on Linux `amd64` and `arm64`
-
-Twitee has no database, background worker, durable job queue, scheduler, or web dashboard.
-
 ## Quick start
 
 You need Docker with Compose v2.
+
+### 1. Configure Twitee
 
 ```bash
 git clone https://github.com/nohuman-labs/twitee.git
@@ -28,98 +43,128 @@ cd twitee
 cp .env.example .env
 ```
 
-Generate two different secrets and paste them into `.env`:
+Generate two different secrets:
 
 ```bash
+# Use this value for TWITEE_API_KEY
 openssl rand -hex 32
+
+# Use this value for TWITEE_ENCRYPTION_KEY
 openssl rand -hex 32
 ```
 
-Start Twitee:
+Paste them into `.env`, then start the service:
 
 ```bash
 docker compose up --build -d
 curl http://127.0.0.1:8080/healthz
 ```
 
-Keep `TWITEE_ENCRYPTION_KEY` stable. Losing or changing it makes the saved X session unreadable and requires a new login.
+A healthy process returns:
 
-## Sign in to X
+```json
+{"ok":true,"service":"twitee"}
+```
 
-Start a login session with your API key:
+### 2. Sign in to X
+
+Load your configuration and start a login session:
 
 ```bash
 set -a; . ./.env; set +a
+
 curl -X POST \
   -H "Authorization: Bearer $TWITEE_API_KEY" \
   http://127.0.0.1:8080/v1/session/login
 ```
 
-Open the returned `no_vnc_url` in a browser and sign in directly on X's page. Twitee waits for `x.com/home`, verifies the `auth_token` and `ct0` cookies, encrypts the browser storage state, and closes the login browser.
+Open the returned `no_vnc_url` in your browser and sign in directly on X. The URL expires after ten minutes and stops working as soon as login completes.
 
-Check the result:
+Check the session:
 
 ```bash
 curl -H "Authorization: Bearer $TWITEE_API_KEY" \
   http://127.0.0.1:8080/v1/session
 ```
 
-The status changes from `login_pending` to `ready`. A login URL expires after ten minutes and stops working as soon as login completes.
+Continue when its status is `ready`. Twitee has verified the `auth_token` and `ct0` cookies, encrypted the browser session, and closed the login browser.
 
-## Call the API
+### 3. Make your first request
 
 ```bash
-# Profile
 curl -H "Authorization: Bearer $TWITEE_API_KEY" \
   http://127.0.0.1:8080/v1/profiles/openai
-
-# Profile posts
-curl -H "Authorization: Bearer $TWITEE_API_KEY" \
-  http://127.0.0.1:8080/v1/profiles/openai/posts
-
-# One post
-curl -H "Authorization: Bearer $TWITEE_API_KEY" \
-  http://127.0.0.1:8080/v1/posts/openai/1234567890
-
-# Latest post search
-curl -G -H "Authorization: Bearer $TWITEE_API_KEY" \
-  --data-urlencode "q=open source" \
-  http://127.0.0.1:8080/v1/search/posts
-
-# People search
-curl -G -H "Authorization: Bearer $TWITEE_API_KEY" \
-  --data-urlencode "q=OpenAI" \
-  http://127.0.0.1:8080/v1/search/people
 ```
 
-Pass a returned cursor unchanged with `?cursor=...` to continue profile-post or search results. The complete route, schema, and error contract is in [openapi.yaml](openapi.yaml). Ready-to-run commands are also in [examples/curl.sh](examples/curl.sh).
-
-Success responses have one envelope:
+Every `/v1/*` endpoint returns the same envelope:
 
 ```json
 {
   "ok": true,
-  "data": {},
+  "data": {
+    "handle": "openai",
+    "displayName": "OpenAI",
+    "availabilityStatus": "available"
+  },
   "next_cursor": null,
   "error": null
 }
 ```
 
-## Deployment notes
+## API
 
-Compose binds the API and noVNC ports to `127.0.0.1`. Keep that default for a local deployment. For a remote host, put both ports behind a trusted TLS reverse proxy, require network-level access control, and set `TWITEE_NOVNC_URL` to the external HTTPS URL. Do not expose port 6080 directly to the public internet.
+All `/v1/*` routes require `Authorization: Bearer <TWITEE_API_KEY>`.
 
-The named `twitee-data` volume contains the encrypted X session and browser cache. Login profiles live in the container's temporary filesystem and are deleted when the login browser closes. Back up the encryption key separately from the volume.
+| Method | Route | Result |
+| --- | --- | --- |
+| `POST` | `/v1/session/login` | Start interactive X login |
+| `GET` | `/v1/session` | Read session status |
+| `DELETE` | `/v1/session` | Delete the stored session |
+| `GET` | `/v1/profiles/:handle` | Get a profile |
+| `GET` | `/v1/profiles/:handle/posts` | List profile posts |
+| `GET` | `/v1/posts/:handle/:postId` | Get one post |
+| `GET` | `/v1/search/posts?q=...` | Search latest posts |
+| `GET` | `/v1/search/people?q=...` | Search accounts |
 
-See [authentication and session storage](docs/authentication.md), [architecture](docs/architecture.md), and [troubleshooting](docs/troubleshooting.md) before running Twitee on a remote host.
+Profile-post and search responses may include `next_cursor`. Pass it back unchanged as the `cursor` query parameter to fetch the next page.
+
+See the complete request, response, and error schemas in [openapi.yaml](openapi.yaml). More curl examples are in [examples/curl.sh](examples/curl.sh).
+
+## Deployment and security
+
+Docker Compose binds the API and noVNC ports to `127.0.0.1` by default:
+
+| Port | Purpose | Exposure |
+| --- | --- | --- |
+| `8080` | JSON API | Keep private or place behind authenticated TLS |
+| `6080` | Interactive login | Keep private; never expose directly to the internet |
+
+For a remote deployment, put both ports behind a trusted TLS reverse proxy and network-level access control. Set `TWITEE_NOVNC_URL` to the external HTTPS address used for port `6080`.
+
+The `twitee-data` volume contains the encrypted X session and browser cache. Keep `TWITEE_ENCRYPTION_KEY` stable and store it separately from the volume. Losing or changing the key makes the session unreadable and requires another login.
+
+The noVNC URL contains a random capability rather than your API key. Raw VNC and websockify remain bound to loopback inside the container. Login profiles use temporary storage and are removed after the browser closes.
+
+Read [authentication and session storage](docs/authentication.md) before deploying outside a local machine. Operational details are in [architecture](docs/architecture.md) and [troubleshooting](docs/troubleshooting.md).
 
 ## Tech stack
 
-- Node.js 22 and TypeScript, using the native HTTP, crypto, and filesystem APIs
-- CloakBrowser with Playwright Core for browser control
-- Zod for boundary validation and Pino for redacted crawler logs
+- Node.js 22 and TypeScript
+- CloakBrowser and Playwright Core
+- Native Node.js HTTP, crypto, and filesystem APIs
+- Zod for input validation and Pino for redacted logs
 - Xvfb, Fluxbox, x11vnc, noVNC, and websockify for interactive login
-- Vitest for tests
+- Docker, Docker Compose, and Vitest
+
+Linux `amd64` and `arm64` are supported.
+
+## Limits
+
+- One X account and one active crawl per instance
+- No durable jobs; callers wait for the HTTP response
+- No official X API compatibility layer
+- X can impose login challenges, account locks, or rate limits
+- Site changes can require parser updates
 
 ## Development
 
@@ -131,15 +176,9 @@ npm run build
 docker build -t twitee:dev .
 ```
 
-Unit and integration tests use sanitized fixtures and never log in to X. Live-X verification is manual because it needs an account and can encounter account-specific challenges.
+Tests use sanitized fixtures and never log in to X. Live-X verification is manual because it needs an account and may encounter account-specific challenges.
 
-## Limits
-
-- One X account and one crawl at a time per instance
-- No durable jobs: callers wait for the HTTP response
-- No official X API compatibility layer
-- Site changes can require parser updates
-- Login challenges, locks, and rate limits remain controlled by X
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and report security issues through GitHub's private vulnerability reporting flow described in [SECURITY.md](SECURITY.md).
 
 ## License
 
