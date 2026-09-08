@@ -1,0 +1,9 @@
+.git
+.github
+.env
+coverage
+data
+dist
+docs
+node_modules
+*.log

@@ -1,0 +1,277 @@
+openapi: 3.1.0
+info:
+  title: Twitee API
+  version: 0.1.0
+  description: Self-hosted, browser-native JSON API for X.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: "{protocol}://{host}"
+    variables:
+      protocol:
+        default: http
+        enum: [http, https]
+      host:
+        default: 127.0.0.1:8080
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      summary: Check process health
+      operationId: getHealth
+      security: []
+      responses:
+        "200": { description: Process is serving HTTP }
+  /readyz:
+    get:
+      summary: Check crawl readiness
+      operationId: getReadiness
+      security: []
+      responses:
+        "200": { description: Browser and X session are ready }
+        "503": { description: Browser or X session is unavailable }
+  /v1/session/login:
+    post:
+      summary: Start an interactive X login
+      operationId: startLogin
+      responses:
+        "202": { $ref: "#/components/responses/Success" }
+        "401": { $ref: "#/components/responses/Error" }
+  /v1/session:
+    get:
+      summary: Read X session status
+      operationId: getSession
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "401": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Delete the stored X session
+      operationId: deleteSession
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "401": { $ref: "#/components/responses/Error" }
+  /v1/profiles/{handle}:
+    get:
+      summary: Get an X profile
+      operationId: getProfile
+      parameters:
+        - $ref: "#/components/parameters/Handle"
+      responses:
+        "200":
+          description: Normalized profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfileEnvelope" }
+        "400": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/profiles/{handle}/posts:
+    get:
+      summary: List posts from an X profile
+      operationId: listProfilePosts
+      parameters:
+        - $ref: "#/components/parameters/Handle"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Normalized posts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostsEnvelope" }
+        "400": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/posts/{handle}/{postId}:
+    get:
+      summary: Get one X post
+      operationId: getPost
+      parameters:
+        - $ref: "#/components/parameters/Handle"
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9]+$" }
+      responses:
+        "200":
+          description: Normalized post
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostEnvelope" }
+        "400": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/search/posts:
+    get:
+      summary: Search latest X posts
+      operationId: searchPosts
+      parameters:
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Normalized posts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostsEnvelope" }
+        "400": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/search/people:
+    get:
+      summary: Search X accounts
+      operationId: searchPeople
+      parameters:
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Normalized people
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PeopleEnvelope" }
+        "400": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    Handle:
+      name: handle
+      in: path
+      required: true
+      schema: { type: string, pattern: "^@?[A-Za-z0-9_]{1,15}$" }
+    Query:
+      name: q
+      in: query
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 512 }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string, maxLength: 4096 }
+  schemas:
+    SuccessEnvelope:
+      type: object
+      required: [ok, data, next_cursor, error]
+      properties:
+        ok: { const: true }
+        data: {}
+        next_cursor: { type: [string, "null"] }
+        error: { type: "null" }
+    ProfileEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/Profile" }
+    PostEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/Post" }
+    PostsEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Post" }
+    PeopleEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/PeopleSearchItem" }
+    Profile:
+      type: object
+      required: [handle, availabilityStatus]
+      properties:
+        handle: { type: string }
+        sourceProfileId: { type: [string, "null"] }
+        displayName: { type: [string, "null"] }
+        avatarUrl: { type: [string, "null"], format: uri }
+        bannerUrl: { type: [string, "null"], format: uri }
+        bio: { type: [string, "null"] }
+        location: { type: [string, "null"] }
+        websiteUrl: { type: [string, "null"], format: uri }
+        isVerified: { type: boolean }
+        sensitiveLabel: { type: [string, "null"] }
+        availabilityStatus:
+          enum: [available, protected, not_found, unavailable, suspended]
+        sourceUrl: { type: [string, "null"], format: uri }
+        stats:
+          type: object
+          properties:
+            followersCount: { type: integer, minimum: 0 }
+            followingCount: { type: integer, minimum: 0 }
+            postsCount: { type: integer, minimum: 0 }
+            listedCount: { type: [integer, "null"], minimum: 0 }
+            sourceUrl: { type: [string, "null"], format: uri }
+    Post:
+      type: object
+      required: [sourcePostId, handle, text, postedAt]
+      properties:
+        sourcePostId: { type: string }
+        handle: { type: string }
+        displayName: { type: [string, "null"] }
+        avatarUrl: { type: [string, "null"], format: uri }
+        isPinned: { type: boolean }
+        isRepost: { type: boolean }
+        repostedByHandle: { type: [string, "null"] }
+        repostedByDisplayName: { type: [string, "null"] }
+        repostedByAvatarUrl: { type: [string, "null"], format: uri }
+        text: { type: string }
+        postedAt: { type: string, format: date-time }
+        likeCount: { type: integer, minimum: 0 }
+        repostCount: { type: integer, minimum: 0 }
+        replyCount: { type: integer, minimum: 0 }
+        quoteCount: { type: integer, minimum: 0 }
+        viewCount: { type: [integer, "null"], minimum: 0 }
+        media:
+          type: array
+          items: { type: object, additionalProperties: true }
+        sensitiveLabel: { type: [string, "null"] }
+        isReply: { type: boolean }
+        quotedPost: { type: [object, "null"], additionalProperties: true }
+        sourceUrl: { type: [string, "null"], format: uri }
+    PeopleSearchItem:
+      type: object
+      required: [rank, handle]
+      properties:
+        rank: { type: integer, minimum: 0 }
+        handle: { type: string }
+        displayName: { type: [string, "null"] }
+        avatarUrl: { type: [string, "null"], format: uri }
+        bio: { type: [string, "null"] }
+        followersCount: { type: [integer, "null"], minimum: 0 }
+        verified: { type: boolean }
+        sourceUrl: { type: [string, "null"], format: uri }
+    ErrorEnvelope:
+      type: object
+      required: [ok, data, next_cursor, error]
+      properties:
+        ok: { const: false }
+        data: { type: "null" }
+        next_cursor: { type: "null" }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              enum: [invalid_input, unauthorized, not_authenticated, not_found, protected_account, rate_limited, queue_full, browser_unavailable, upstream_timeout, upstream_changed, internal_error]
+            message: { type: string }
+  responses:
+    Success:
+      description: Successful response
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SuccessEnvelope" }
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }

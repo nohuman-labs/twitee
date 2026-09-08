@@ -1,0 +1,27 @@
+{
+  "name": "twitee",
+  "version": "0.1.0",
+  "description": "Self-hosted, browser-native JSON API for X",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "cloakbrowser": "0.3.30",
+    "pino": "10.3.1",
+    "playwright-core": "1.60.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "typescript": "5.9.3",
+    "vitest": "5.0.0"
+  }
+}
