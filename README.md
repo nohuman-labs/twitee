@@ -5,7 +5,7 @@
 
 ![A browser session flowing through encrypted storage into a JSON API](docs/images/twitee-hero.png)
 
-Twitee turns a real browser session into a small, self-hosted JSON API for X. Deploy one container, sign in to X through the built-in browser, then request profiles, posts, and search results over HTTP.
+Twitee turns a real browser session into a small, self-hosted JSON API for X. Its core is a capability-protected noVNC login: Twitee launches a visible browser, you sign in to X inside that browser, and Twitee saves the session for later API requests.
 
 Twitee crawls the website a person sees in a browser. It does not use the official X API, ask for your X password, or depend on a database, worker, or job queue.
 
@@ -35,7 +35,7 @@ One instance uses one X account and runs one crawl at a time. Up to ten requests
 
 You need Docker with Compose v2.
 
-### 1. Configure Twitee
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/nohuman-labs/twitee.git
@@ -43,17 +43,25 @@ cd twitee
 cp .env.example .env
 ```
 
-Generate two different secrets:
+### 2. Create your local keys
+
+Run this command twice:
 
 ```bash
-# Use this value for TWITEE_API_KEY
-openssl rand -hex 32
-
-# Use this value for TWITEE_ENCRYPTION_KEY
 openssl rand -hex 32
 ```
 
-Paste them into `.env`, then start the service:
+It prints a new random value each time. Open `.env` and paste the first value after `TWITEE_API_KEY=` and the second value after `TWITEE_ENCRYPTION_KEY=`:
+
+```dotenv
+TWITEE_API_KEY=your-first-generated-value
+TWITEE_ENCRYPTION_KEY=your-second-generated-value
+TWITEE_NOVNC_URL=http://127.0.0.1:6080
+```
+
+`TWITEE_API_KEY` protects the Twitee API. It is created by you and is unrelated to your X account. `TWITEE_ENCRYPTION_KEY` encrypts the saved X browser session. Keep both values private.
+
+### 3. Start Twitee
 
 ```bash
 docker compose up --build -d
@@ -66,30 +74,74 @@ A healthy process returns:
 {"ok":true,"service":"twitee"}
 ```
 
-### 2. Sign in to X
+Docker Compose reads the keys from `.env` automatically.
 
-Load your configuration and start a login session:
+### 4. Start a noVNC login session
+
+Load the same API key into your current shell:
 
 ```bash
-set -a; . ./.env; set +a
+. ./.env
+```
 
+Now ask Twitee to launch the login browser:
+
+```bash
 curl -X POST \
   -H "Authorization: Bearer $TWITEE_API_KEY" \
   http://127.0.0.1:8080/v1/session/login
 ```
 
-Open the returned `no_vnc_url` in your browser and sign in directly on X. The URL expires after ten minutes and stops working as soon as login completes.
+This command does not log in to X. It starts a visible browser inside the Twitee container and returns a response like this:
 
-Check the session:
+```json
+{
+  "ok": true,
+  "data": {
+    "status": "login_pending",
+    "expires_at": "2026-09-09T12:10:00.000Z",
+    "no_vnc_url": "http://127.0.0.1:6080?capability=..."
+  },
+  "next_cursor": null,
+  "error": null
+}
+```
+
+### 5. Open noVNC and sign in to X
+
+Copy the complete `no_vnc_url` from the response and open it in your normal web browser. noVNC connects you to the browser running inside Twitee, which is already showing the X login page.
+
+Sign in on that X page. Your username, password, and any login challenge are entered directly into X inside the noVNC browser; they are not sent to the Twitee API.
+
+The noVNC URL expires after ten minutes. When the browser reaches `x.com/home`, Twitee verifies the session, encrypts it on the Docker volume, and closes the login browser. The noVNC window disconnecting at this point is expected.
+
+### 6. Check that the session is ready
+
+Run:
 
 ```bash
 curl -H "Authorization: Bearer $TWITEE_API_KEY" \
   http://127.0.0.1:8080/v1/session
 ```
 
-Continue when its status is `ready`. Twitee has verified the `auth_token` and `ct0` cookies, encrypted the browser session, and closed the login browser.
+Continue when the response contains:
 
-### 3. Make your first request
+```json
+{
+  "ok": true,
+  "data": {
+    "status": "ready",
+    "startedAt": "2026-09-09T12:00:00.000Z",
+    "expiresAt": null,
+    "readyAt": "2026-09-09T12:02:00.000Z",
+    "error": null
+  },
+  "next_cursor": null,
+  "error": null
+}
+```
+
+### 7. Make your first crawler request
 
 ```bash
 curl -H "Authorization: Bearer $TWITEE_API_KEY" \
