@@ -9,6 +9,8 @@ Twitee turns a real browser session into a small, self-hosted JSON API for X. It
 
 Twitee crawls the website a person sees in a browser. It does not use the official X API, ask for your X password, or depend on a database, worker, or job queue.
 
+Prefer a hosted, no-setup viewer? Try [Twitee](https://twitee.co/).
+
 ## How it works
 
 ```mermaid
